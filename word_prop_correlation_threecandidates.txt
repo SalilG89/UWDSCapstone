@@ -1,0 +1,136 @@
+rm(list=ls())
+
+mydata_Sanders <- read.csv("C:\\Users\\lilas\\Documents\\capstone_etl_Sanders.csv", header = TRUE)
+
+head(mydata,10)
+
+mydata_Sanders$cleantext <- gsub('[[:punct:] ]+',' ', mydata_Sanders$text)
+
+mytibble_Sanders <- tibble(text = mydata_Sanders$cleantext, line = 1:1000)
+
+mytibble_Sanders <- mytibble_Sanders %>%
+  unnest_tokens( word,  text)
+
+
+##mytibble_Sanders %>% count(word, sort = TRUE)
+##mytibble %>% arrange(desc(line))
+
+mytidy_Sanders <- mytibble_Sanders %>% anti_join(stop_words)
+mytidy_Sanders
+
+
+mytidy_Sanders %>% count(word, sort = TRUE)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+mydata_Kamala <- read.csv("C:\\Users\\lilas\\Documents\\capstone_etl_Kamala.csv", header = TRUE)
+
+head(mydata_Kamala,10)
+
+mydata_Kamala$cleantext <- gsub('[[:punct:] ]+',' ', mydata_Kamala$text)
+
+mytibble_Kamala <- tibble(text = mydata_Kamala$cleantext, line = 1:1000)
+
+mytibble_Kamala <- mytibble_Kamala %>%
+  unnest_tokens( word,  text)
+
+
+##mytibble_Sanders %>% count(word, sort = TRUE)
+##mytibble %>% arrange(desc(line))
+
+mytidy_Kamala <- mytibble_Kamala %>% anti_join(stop_words)
+mytidy_Kamala
+
+
+mytidy_Kamala %>% count(word, sort = TRUE)
+
+
+
+
+
+
+
+
+
+mydata_Beto <- read.csv("C:\\Users\\lilas\\Documents\\capstone_etl_Beto.csv", header = TRUE)
+
+head(mydata_Beto,10)
+
+mydata_Beto$cleantext <- gsub('[[:punct:] ]+',' ', mydata_Beto$text)
+
+mytibble_Beto <- tibble(text = mydata_Beto$cleantext, line = 1:1000)
+
+mytibble_Beto <- mytibble_Beto %>%
+  unnest_tokens( word,  text)
+
+
+##mytibble_Sanders %>% count(word, sort = TRUE)
+##mytibble %>% arrange(desc(line))
+
+mytidy_Beto <- mytibble_Beto %>% anti_join(stop_words)
+mytidy_Beto
+
+
+mytidy_Beto %>% count(word, sort = TRUE)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+frequency <- bind_rows(mutate(mytidy_Kamala, author = "Kamala"),
+                       mutate(mytidy_Beto, author = "Beto"), 
+                       mutate(mytidy_Sanders, author = "Sanders")) %>% 
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(author, word) %>%
+  group_by(author) %>%
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(author, proportion) %>% 
+  gather(author, proportion, `Kamala`:`Sanders`)
+
+
+
+
+
+
+
+##library(scales)
+
+# expect a warning about rows with missing values being removed
+
+##library(scales)
+
+# expect a warning about rows with missing values being removed
+ggplot(frequency, aes(x = proportion, y = `Beto`, color = abs(`Beto` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+  facet_wrap(~author, ncol = 2) +
+  theme(legend.position="none") +
+  labs(y = "Beto", x = NULL)
