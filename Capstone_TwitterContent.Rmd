@@ -1,0 +1,410 @@
+---
+title: "livesimply_mom Twitter Content Report"
+author: "Salil Gupta"
+date: "7/19/2019"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Tweets over time
+
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+library(dplyr)
+library(tibble)
+library(tidytext)
+library(stringr)
+library(ggplot2)
+library(tidyr) 
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(readr)
+library(tidyverse)
+library(purrr)
+library(broom)
+library(data.table)
+library("RODBC")
+
+my_tweets <- fread("C://Users//sgupta//Downloads//DATAFILES//Userlivesimply_mom.txt", header = FALSE, sep = '|', skip = 1)
+
+colnames(my_tweets) <- c("text", "timestamp", "tweetid", "userid")
+my_tweets <- my_tweets %>% arrange(tweetid)
+
+
+my_tweets<- my_tweets %>% mutate(ronum = row_number(),timestamp = ymd_hms(timestamp))
+                                 
+
+my_tweets$cleantext <- gsub('[[:punct:] ]+',' ', substring(my_tweets$text,2))
+my_tweets$cleantext <- str_replace(my_tweets$cleantext, ' x.. ', ' ' )
+my_tweets$cleantext <- str_replace(my_tweets$cleantext, 'nhttps', '' )
+my_tweets$cleantext <- str_replace(my_tweets$cleantext, 'https', '' )
+my_tweets$cleantext <- str_replace(my_tweets$cleantext, ' x.. ', '' )
+my_tweets$cleantext <- str_replace(my_tweets$cleantext, ' http ', '' )
+my_tweets$cleantext <- str_replace(my_tweets$cleantext, ' http ', '' )
+my_tweets$cleantext <- str_replace(my_tweets$cleantext, 'https', '' )
+
+
+
+
+
+
+
+
+my_tweets %>% 
+  ggplot(aes(x = timestamp, y = ..count..,fill = userid)) +
+  geom_histogram(position = "identity", bins = 150, show.legend = FALSE) + xlab('month')
+
+
+
+
+
+
+
+```
+
+
+
+
+
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+
+
+remove_reg <- "&amp;|&lt;|&gt;"
+tidy_words <- my_tweets %>% 
+  filter(!str_detect(cleantext, "^RT")) %>%
+  
+  mutate(text = str_remove_all(text, remove_reg)) %>%
+  unnest_tokens(output = word, input = text, token = "tweets") %>%
+  filter(!word %in% stop_words$word,
+         !word %in% str_remove_all(stop_words$word, "'"),
+         str_detect(word, "[a-z]")) %>%
+  filter(word != "brt") %>%
+  filter(word != "bthe") %>%
+  filter(!grepl("\\d", word))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Wordcloud
+
+
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+
+library(wordcloud)
+
+pal <- brewer.pal(8,"Dark2")
+
+wordcloud(tidy_words$word, random.order = FALSE, max.words = 50, colors=pal)
+
+
+
+
+
+
+```
+
+
+
+## Sentiment Cloud
+
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+library(reshape2)
+
+tidy_words %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c( "indianred3", "green3"),
+                   max.words = 100)
+
+
+
+```
+
+
+
+
+
+## Words that contribute most to sentiment 
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+
+
+
+afinn_word_counts <- tidy_words %>%
+  inner_join(get_sentiments("afinn")) %>% group_by(word) %>%
+  summarise(sum = sum(value)) %>%mutate(sentiment = ifelse(sum <0, 'Negative', 'Positive'))%>%
+  mutate(abs_sentiment = abs(sum))
+
+
+afinn_word_counts %>%
+  group_by(sentiment) %>%
+  top_n(10,abs_sentiment) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, abs_sentiment)) %>%
+  ggplot(aes(word, abs_sentiment, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(y = "Contribution to Sentiment +-",
+       x = NULL) +
+  coord_flip()
+
+```
+
+## Largest Change in Mentions over time
+
+```{r echo = FALSE, warning = FALSE, message = FALSE, error = TRUE}
+
+
+
+words_by_time <- tidy_words %>%
+  filter(word != "brt") %>%
+  filter(!str_detect(word, "^@")) %>%
+  mutate(time_month = floor_date(timestamp, unit = "1 month")) %>%
+  count(time_month,  word) %>%
+  group_by(time_month) %>%
+  mutate(time_total = sum(n)) %>%
+  group_by( word) %>%
+  mutate(word_total = sum(n)) %>%
+  ungroup() %>%
+  rename(count = n) %>%
+  filter(word_total > 30)
+
+nested_data <- words_by_time %>%
+  nest(-word) 
+
+
+
+
+
+nested_models <- nested_data %>%
+  mutate(models = map(data, ~ glm(cbind(count, time_total) ~ time_month, ., 
+                                  family = "binomial")))
+
+
+unnested_models <- nested_models %>%
+  unnest(map(models, tidy)) %>% ##used to extract model metadata into table (slope coefficient, intercept)
+  filter(term == "time_month") %>% ##used to extract the linear coefficient of our 1 independent variable
+  mutate(adjusted.p.value = p.adjust(p.value)) #We use an adjusted p value to improve the strength of our test
+
+top_slopes <- unnested_models %>% 
+  filter(adjusted.p.value < 0.05) ##we only look at words with statistically significant trends
+
+
+
+
+
+words_by_time %>%
+  inner_join(top_slopes, by = c("word")) %>%
+  ggplot(aes(time_month, count/time_total, color = word)) +
+  geom_line(size = 1.3) +
+  labs(x = my_tweets$userid[1], y = "Word frequency")
+
+
+
+
+
+
+```
+
+
+## Sentiment over recent tweets
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+afinn <- tidy_words %>% 
+  inner_join(get_sentiments("afinn"))%>% 
+  group_by(index = ronum %/% 100) %>% 
+  summarise(sentiment = sum(value)) %>% 
+  mutate(method = "AFINN")
+
+bing_and_nrc <- 
+  bind_rows(
+  
+  tidy_words %>% 
+  inner_join(get_sentiments("bing")) %>%
+  mutate(method = "Bing et al."),
+  
+  tidy_words %>% 
+  inner_join( get_sentiments("loughran") %>%    filter(sentiment %in% c("positive","negative"))) %>%
+  mutate(method = "Loughran")) %>%
+  count(method, index = ronum %/% 100, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative)
+
+  bind_rows(afinn, 
+          bing_and_nrc) %>%
+  ggplot(aes(index, sentiment, fill = method)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~method, ncol = 1, scales = "free_y")
+  
+  
+  
+  
+  
+  
+  
+  
+
+
+```
+
+
+## N-Gram Analysis
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+  
+ my_bigrams <- my_tweets %>%
+  unnest_tokens( bigram,  cleantext, token = "ngrams", n = 2)
+
+
+bigrams_separated <- my_bigrams %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+
+bigrams_separated <-bigrams_separated %>%
+  anti_join(stop_words, by =c("word1" = "word") )%>% 
+  anti_join(stop_words, by =c("word2" = "word") )
+
+
+
+clean_bigrams <- bigrams_separated %>% filter(substring(word1,0,1) != 'x') %>% filter(substring(word2,0,1) != 'x') %>%
+  filter(nchar(word1) > 2) %>% filter(nchar(word2) > 2)
+
+
+cu_bigrams <-clean_bigrams %>%
+  unite(bigram, word1, word2, sep = " ")
+
+
+cu_bigrams %>%
+group_by(bigram) %>%
+  tally(sort = T)%>%
+  arrange(desc(n)) %>%
+  top_n(10) %>%
+  ggplot(aes(bigram, n)) +
+  geom_col(show.legend = FALSE, fill = 'deepskyblue') +
+  labs(x = 'Bigrams' , y = "Count") +  coord_flip()
+
+
+  
+  
+
+```
+
+
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+ 
+
+my_trigrams <- my_tweets %>%
+  unnest_tokens( trigram,  cleantext, token = "ngrams", n = 3)
+
+
+trigrams_separated <- my_trigrams %>%
+  separate(trigram, c("word1", "word2", "word3"), sep = " ")
+
+
+
+
+
+clean_trigrams <- trigrams_separated %>% 
+  filter(substring(word1,0,1) != 'x') %>% 
+  filter(substring(word2,0,1) != 'x') %>%
+  filter(substring(word3,0,1) != 'x') %>%
+  filter(nchar(word1) > 2) %>% filter(nchar(word2) > 2) %>% filter(nchar(word2) > 2)
+
+
+cu_trigrams <-clean_trigrams %>%
+  unite(trigram, word1, word2, word3, sep = " ")
+
+
+
+cu_trigrams %>%
+  group_by(trigram) %>%
+  tally(sort = T)%>%
+  arrange(desc(n)) %>%
+  top_n(10) %>%
+  ggplot(aes(trigram, n)) +
+  geom_col(show.legend = FALSE, fill = 'deepskyblue') +
+  labs(x = 'Trigrams' , y = "Count") +  coord_flip()
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+
+ 
+bigram_counts <- clean_bigrams  %>% 
+  count(word1, word2, sort = TRUE)
+
+
+
+
+
+library(igraph)
+bigram_graph <- bigram_counts %>%
+  filter(n > 20) %>%
+  graph_from_data_frame()
+
+
+
+
+library(ggraph)
+
+
+ggraph(bigram_graph, layout = "fr") +
+  geom_edge_link() +
+  geom_node_point() +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1)
+
+
+
+
+
+```
+
